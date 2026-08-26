@@ -1,0 +1,4 @@
+# id	timeout_ms	command
+quick_ok	1000	printf 'hello\n'
+fails	1000	echo 'problem' >&2; exit 7
+too_slow	300	sleep 1
