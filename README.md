@@ -6,7 +6,7 @@ each job's output to disk, and reports the results.
 
 ## Build
 
-Requires Linux, GCC and GNU Make. No third-party libraries.
+Requires Linux, GCC and GNU Make. No third-party libraries.    
 
 ```sh
 make            # builds bin/taskrunner
@@ -160,15 +160,24 @@ Coverage (33 assertions):
 
 ## Time spent
 
-Approximately TODO hours: TODO on the parser and process runner, TODO on the
-test suite, and TODO on debugging and documentation.
+ive spent approximately 10 hours, 50% of the time was dedicated to understand the assignment to create the enviroment and planning the architecture.
+the rest of the time was dedicated to write the logic with gemini write the code and check with claude.
+
+
 
 ## AI use disclosure
 
-**Tool used:** Claude (Anthropic), through the web interface.
+**Tool used:** Claude, Gemini.
 
-**Where it helped.** I wrote the initial version of all four modules with the help of gemeni. I
-then used Claude as a reviewer against the assignment specification, and it
+At first i sent the assignment file to gemini to help me understand which program i need to develop than used him to build the architecture.
+
+Second part i sent the file also to claude telling to build me a guide that will help me develop stage by stage.
+
+Used the guide to write the code with gemini.
+
+Every stage i made was tested before i moved on to the next one.
+
+Then used Claude as a reviewer against the assignment specification, and it
 found real defects I had missed:
 
 - `parse_jobs_file` read the fields in the wrong order (`id, command, timeout`
