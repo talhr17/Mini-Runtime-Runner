@@ -10,12 +10,21 @@
 #include "runner.h"
 
 
-static long long get_time_ms() {
+static long long get_time_ms(void) {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        perror("clock_gettime");
+        return 0;
+    }
     return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+
+/* Slot states. */
+#define SLOT_FREE     0  /* no child in this slot                         */
+#define SLOT_RUNNING  1  /* child running, within its timeout             */
+#define SLOT_TERMED   2  /* past deadline, SIGTERM sent, in grace period  */
+#define SLOT_KILLED   3  /* grace period expired, SIGKILL already sent    */
 
 typedef struct {
     pid_t pid;
@@ -25,10 +34,10 @@ typedef struct {
     int state; 
 } ActiveProcess;
 
-void run_jobs(Job *jobs, int job_count, int max_parallel, const char *output_dir) {
-    ActiveProcess *active = calloc(max_parallel, sizeof(ActiveProcess));
+int run_jobs(Job *jobs, int job_count, int max_parallel, const char *output_dir) {
     int running_processes = 0;
     int current_job = 0;
+    int setup_failed = 0;
 
     for (int i = 0; i < job_count; i++) {
         jobs[i].exit_code = -1;
@@ -37,17 +46,25 @@ void run_jobs(Job *jobs, int job_count, int max_parallel, const char *output_dir
         strcpy(jobs[i].status, "failed"); 
     }
 
-    while (current_job < job_count || running_processes > 0) {
+    ActiveProcess *active = calloc((size_t)max_parallel, sizeof(ActiveProcess));
+    if (!active) {
+        fprintf(stderr, "Error: out of memory allocating %d job slots\n", max_parallel);
+        return -1;
+    }
+
+    /* Stop launching once setup fails, but keep looping until every child
+     * already started has been reaped. */
+    while ((current_job < job_count && !setup_failed) || running_processes > 0) {
         int status;
         pid_t done_pid;
         
         while ((done_pid = waitpid(-1, &status, WNOHANG)) > 0) {
             for (int i = 0; i < max_parallel; i++) {
-                if (active[i].state > 0 && active[i].pid == done_pid) {
+                if (active[i].state != SLOT_FREE && active[i].pid == done_pid) {
                     int j_idx = active[i].job_index;
                     jobs[j_idx].duration_ms = (int)(get_time_ms() - active[i].start_time);
                     
-                    if (active[i].state == 2) { 
+                    if (active[i].state >= SLOT_TERMED) { 
                         strcpy(jobs[j_idx].status, "timeout");
                     } else if (WIFEXITED(status)) {
                         jobs[j_idx].exit_code = WEXITSTATUS(status);
@@ -61,7 +78,7 @@ void run_jobs(Job *jobs, int job_count, int max_parallel, const char *output_dir
                         strcpy(jobs[j_idx].status, "failed");
                     }
                     
-                    active[i].state = 0;
+                    active[i].state = SLOT_FREE;
                     running_processes--;
                     break;
                 }
@@ -71,27 +88,36 @@ void run_jobs(Job *jobs, int job_count, int max_parallel, const char *output_dir
     
         long long now = get_time_ms();
         for (int i = 0; i < max_parallel; i++) {
-            if (active[i].state == 1) { 
+            if (active[i].state == SLOT_RUNNING) { 
                 int j_idx = active[i].job_index;
                 if (now - active[i].start_time >= jobs[j_idx].timeout_ms) {
-                    kill(active[i].pid, SIGTERM);
-                    active[i].state = 2; 
+                    if (kill(active[i].pid, SIGTERM) != 0) {
+                        perror("kill(SIGTERM)");
+                    }
+                    active[i].state = SLOT_TERMED; 
                     active[i].term_time = now;
                 }
-            } else if (active[i].state == 2) { 
+            } else if (active[i].state == SLOT_TERMED) { 
+                /* Grace period expired: escalate once, not on every poll. */
                 if (now - active[i].term_time >= 250) {
-                    kill(active[i].pid, SIGKILL);
+                    if (kill(active[i].pid, SIGKILL) != 0) {
+                        perror("kill(SIGKILL)");
+                    }
+                    active[i].state = SLOT_KILLED;
                 }
             }
         }
 
-        while (running_processes < max_parallel && current_job < job_count) {
+        while (!setup_failed && running_processes < max_parallel && current_job < job_count) {
             int slot = -1;
             for (int i = 0; i < max_parallel; i++) {
-                if (active[i].state == 0) {
+                if (active[i].state == SLOT_FREE) {
                     slot = i;
                     break;
                 }
+            }
+            if (slot < 0) {
+                break;  /* defensive: should not happen while running < max */
             }
 
             pid_t pid = fork();
@@ -100,29 +126,53 @@ void run_jobs(Job *jobs, int job_count, int max_parallel, const char *output_dir
                 snprintf(out_path, sizeof(out_path), "%s/%s.out.log", output_dir, jobs[current_job].id);
                 snprintf(err_path, sizeof(err_path), "%s/%s.err.log", output_dir, jobs[current_job].id);
                 
+                /* Redirection must succeed: a job whose output cannot be
+                 * captured is a failure, not something to run silently.
+                 * _exit() is used throughout so the stdio buffers this child
+                 * inherited from the parent are never flushed into a log. */
                 int fd_out = open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd_out < 0 || dup2(fd_out, STDOUT_FILENO) < 0) {
+                    perror("cannot open stdout log");
+                    _exit(126);
+                }
+                close(fd_out);
+
                 int fd_err = open(err_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                
-                if (fd_out >= 0) { dup2(fd_out, STDOUT_FILENO); close(fd_out); }
-                if (fd_err >= 0) { dup2(fd_err, STDERR_FILENO); close(fd_err); }
+                if (fd_err < 0 || dup2(fd_err, STDERR_FILENO) < 0) {
+                    perror("cannot open stderr log");
+                    _exit(126);
+                }
+                close(fd_err);
 
                 execl("/bin/sh", "sh", "-c", jobs[current_job].cmd, (char *)NULL);
-                exit(127); 
+                perror("execl");
+                _exit(127); 
             } else if (pid > 0) {
                 active[slot].pid = pid;
                 active[slot].job_index = current_job;
                 active[slot].start_time = get_time_ms();
-                active[slot].state = 1;
+                active[slot].state = SLOT_RUNNING;
                 running_processes++;
                 current_job++;
             } else {
-                perror("fork failed");
-                exit(2);
+                /* Do not exit here: children are still running and must be
+                 * terminated and reaped before this function returns. */
+                perror("fork");
+                setup_failed = 1;
+                for (int i = 0; i < max_parallel; i++) {
+                    if (active[i].state == SLOT_RUNNING) {
+                        kill(active[i].pid, SIGTERM);
+                        active[i].state = SLOT_TERMED;
+                        active[i].term_time = get_time_ms();
+                    }
+                }
+                break;
             }
         }
 
         struct timespec sleep_ts = {0, 10000000L}; 
-        nanosleep(&sleep_ts, NULL);; 
+        nanosleep(&sleep_ts, NULL);
     }
     free(active);
+    return setup_failed ? -1 : 0;
 }
