@@ -12,7 +12,6 @@ void generate_reports(Job *jobs, int job_count, const char *output_dir) {
         return;
     }
 
-    // כתיבת כותרת ה-CSV לפי דרישות המטלה
     fprintf(csv_file, "job_id,status,exit_code,signal,duration_ms\n");
 
     printf("\n=== Execution Summary ===\n");
@@ -21,7 +20,6 @@ void generate_reports(Job *jobs, int job_count, const char *output_dir) {
         char exit_str[16] = "";
         char sig_str[16] = "";
 
-        // המרת המספרים למחרוזות, או השארתם ריקים אם הערך הוא -1
         if (jobs[i].exit_code != -1) {
             snprintf(exit_str, sizeof(exit_str), "%d", jobs[i].exit_code);
         }
@@ -29,11 +27,9 @@ void generate_reports(Job *jobs, int job_count, const char *output_dir) {
             snprintf(sig_str, sizeof(sig_str), "%d", jobs[i].term_signal);
         }
 
-        // כתיבת השורה ל-CSV
         fprintf(csv_file, "%s,%s,%s,%s,%d\n", 
                 jobs[i].id, jobs[i].status, exit_str, sig_str, jobs[i].duration_ms);
 
-        // הדפסה קריאה לטרמינל
         printf("Job %s:\tStatus: %s\tDuration: %d ms\n", 
                jobs[i].id, jobs[i].status, jobs[i].duration_ms);
     }
