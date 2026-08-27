@@ -1,13 +1,14 @@
 # Flags and Compiler
 CC= gcc
-CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -g
+CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -g -Iheader
 
 # files and products
 BIN_DIR = bin
+OBJ_DIR = obj
 TARGET  = $(BIN_DIR)/taskrunner
-SRCS    = main.c parser.c reporter.c runner.c
-OBJS    = $(SRCS:.c=.o)
-HDRS    = job.h parser.h runner.h reporter.h
+SRCS    = $(wildcard src/*.c)
+OBJS    = $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SRCS))
+HDRS    = $(wildcard header/*.h)
 
 .PHONY: all test clean
 
@@ -17,10 +18,10 @@ all: $(TARGET)
 $(TARGET): $(OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $(OBJS)
 
-$(BIN_DIR):
-	mkdir -p $(BIN_DIR)
+$(BIN_DIR) $(OBJ_DIR):
+	mkdir -p $@
 
-%.o: %.c $(HDRS)
+$(OBJ_DIR)/%.o: src/%.c $(HDRS) | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 test: $(TARGET)
@@ -28,4 +29,4 @@ test: $(TARGET)
 
 # Clean 
 clean:
-	rm -rf $(OBJS) $(BIN_DIR) run
+	rm -rf $(OBJ_DIR) $(BIN_DIR) run
