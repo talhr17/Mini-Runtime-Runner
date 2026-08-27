@@ -45,8 +45,14 @@ int main(int argc, char *argv[]) {
         return 2;
     }
 
-    run_jobs(jobs, job_count, max_parallel, output_dir);
+    int run_failed = run_jobs(jobs, job_count, max_parallel, output_dir);
     generate_reports(jobs, job_count, output_dir);
+
+    if (run_failed != 0) {
+        fprintf(stderr, "Error: the run was aborted before every job could start\n");
+        free(jobs);
+        return 2;
+    }
 
     int final_exit_code = 0;
     for (int i = 0; i < job_count; i++) {
