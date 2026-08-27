@@ -30,8 +30,13 @@ void generate_reports(Job *jobs, int job_count, const char *output_dir) {
         fprintf(csv_file, "%s,%s,%s,%s,%d\n", 
                 jobs[i].id, jobs[i].status, exit_str, sig_str, jobs[i].duration_ms);
 
-        printf("Job %s:\tStatus: %s\tDuration: %d ms\n", 
-               jobs[i].id, jobs[i].status, jobs[i].duration_ms);
+        /* Same fields as the CSV row; "-" marks a column that does not
+         * apply, where the CSV leaves the field empty. */
+        printf("Job %s:\tStatus: %s\tExit: %s\tSignal: %s\tDuration: %d ms\n",
+               jobs[i].id, jobs[i].status,
+               exit_str[0] ? exit_str : "-",
+               sig_str[0]  ? sig_str  : "-",
+               jobs[i].duration_ms);
     }
 
     fclose(csv_file);
