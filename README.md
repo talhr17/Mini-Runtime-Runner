@@ -87,13 +87,19 @@ which a tight busy loop would not.
 shorten or extend a timeout. On expiry the job gets `SIGTERM`, and `SIGKILL`
 after a 250 ms grace period.
 
-**Redirection happens in the child.** After `fork`, the child opens its two log
-files, `dup2`s them onto stdout and stderr, and calls
-`execl("/bin/sh", "sh", "-c", cmd)`. The parent never touches the job's output.
+**Redirection happens in the child, and must succeed.** After `fork`, the child
+opens its two log files, `dup2`s them onto stdout and stderr, and calls
+`execl("/bin/sh", "sh", "-c", cmd)`. If either open or `dup2` fails the child
+exits with 126 rather than running a job whose output cannot be captured. The
+child always uses `_exit`, never `exit`, so the stdio buffers it inherited from
+the parent are never flushed into a job's log file. The parent never touches the
+job's output.
 
-**Errors return, they do not exit.** Library functions report a diagnostic and
-return an error value; only `main` decides the process exit code. This keeps
-the modules testable and makes cleanup paths explicit.
+**Errors return, they do not exit.** `parse_arguments`, `parse_jobs_file` and
+`run_jobs` report a diagnostic and return an error value; only `main` decides
+the process exit code. This keeps the modules testable and makes cleanup paths
+explicit. The one exception is `generate_reports`, which reports a failed
+`fopen` and returns without a status — see known limitations.
 
 ## Testing approach
 
@@ -140,8 +146,13 @@ Coverage (33 assertions):
   to roughly 10 ms past its deadline before `SIGTERM` is sent.
 - Duplicate-ID detection is a linear scan, so parsing is O(n²) in the number of
   jobs. Fine for thousands of jobs, not for millions.
-- If `fork` fails partway through a run, the program reports the error and
-  exits without waiting for children already running.
+- `generate_reports` cannot signal failure to its caller: if `summary.csv`
+  cannot be opened, or a write fails part way through, the error is printed but
+  the process still exits 0 or 1 rather than 2.
+- If `fork` fails partway through a run, no further jobs are launched. Children
+  already running are terminated and reaped, the summary is still written, and
+  the program exits with code 2. Jobs that never started are reported as
+  `failed` with an empty exit code rather than with a distinct status.
 - Only the direct child is signalled. A command that spawns its own background
   grandchildren may leave them running after a timeout; process groups would be
   the fix.
